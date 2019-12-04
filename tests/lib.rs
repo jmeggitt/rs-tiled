@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::path::Path;
-use tiled::{parse, parse_file, parse_tileset, Map, PropertyValue, TiledError};
+use tiled::{parse, parse_file, parse_tileset, Map, PropertyValue, TiledError, TilesetRef};
 
 fn read_from_file(p: &Path) -> Result<Map, TiledError> {
     let file = File::open(p).unwrap();
@@ -33,7 +33,11 @@ fn test_external_tileset() {
 fn test_just_tileset() {
     let r = read_from_file(&Path::new("assets/tiled_base64.tmx")).unwrap();
     let t = parse_tileset(File::open(Path::new("assets/tilesheet.tsx")).unwrap(), 1).unwrap();
-    assert_eq!(r.tilesets[0], t);
+
+    match &r.tilesets[0] {
+        TilesetRef::TileSet(set) => assert_eq!(set, &t),
+        _ => panic!("Incorrectly parsed tileset"),
+    }
 }
 
 #[test]
@@ -66,7 +70,7 @@ fn test_image_layers() {
 fn test_tile_property() {
     let r = read_from_file(&Path::new("assets/tiled_base64.tmx")).unwrap();
     let prop_value: String = if let Some(&PropertyValue::StringValue(ref v)) =
-        r.tilesets[0].tiles[0].properties.get("a tile property")
+        r.tilesets[0].unwrap().tiles[0].properties.get("a tile property")
     {
         v.clone()
     } else {

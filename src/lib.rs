@@ -227,7 +227,7 @@ pub struct Map {
     pub height: u32,
     pub tile_width: u32,
     pub tile_height: u32,
-    pub tilesets: Vec<Tileset>,
+    pub tilesets: Vec<TilesetRef>,
     pub layers: Vec<Layer>,
     pub image_layers: Vec<ImageLayer>,
     pub object_groups: Vec<ObjectGroup>,
@@ -309,9 +309,11 @@ impl Map {
         let mut maximum_gid: i32 = -1;
         let mut maximum_ts = None;
         for tileset in self.tilesets.iter() {
-            if tileset.first_gid as i32 > maximum_gid && tileset.first_gid <= gid {
-                maximum_gid = tileset.first_gid as i32;
-                maximum_ts = Some(tileset);
+            if let TilesetRef::TileSet(tileset) = tileset {
+                if tileset.first_gid as i32 > maximum_gid && tileset.first_gid <= gid {
+                    maximum_gid = tileset.first_gid as i32;
+                    maximum_ts = Some(tileset);
+                }
             }
         }
         maximum_ts
@@ -340,6 +342,22 @@ impl FromStr for Orientation {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum TilesetRef {
+    TileSet(Tileset),
+    // relative path and gid
+    Path(String, u32),
+}
+
+impl TilesetRef {
+    pub fn unwrap(&self) -> &Tileset {
+        match self {
+            TilesetRef::TileSet(v) => v,
+            _ => panic!("Attempted to unwrap an unloaded tileset!")
+        }
+    }
+}
+
 /// A tileset, usually the tilesheet image.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Tileset {
@@ -350,7 +368,7 @@ pub struct Tileset {
     pub tile_height: u32,
     pub spacing: u32,
     pub margin: u32,
-    /// The Tiled spec says that a tileset can have mutliple images so a `Vec`
+    /// The Tiled spec says that a tileset can have multiple images so a `Vec`
     /// is used. Usually you will only use one.
     pub images: Vec<Image>,
     pub tiles: Vec<Tile>,
@@ -361,8 +379,11 @@ impl Tileset {
         parser: &mut EventReader<R>,
         attrs: Vec<OwnedAttribute>,
         map_path: Option<&Path>,
-    ) -> Result<Tileset, TiledError> {
-        Tileset::new_internal(parser, &attrs).or_else(|_| Tileset::new_reference(&attrs, map_path))
+    ) -> Result<TilesetRef, TiledError> {
+        match Tileset::new_internal(parser, &attrs) {
+            Ok(v) => Ok(TilesetRef::TileSet(v)),
+            Err(_) => Tileset::new_reference(&attrs, map_path),
+        }
     }
 
     fn new_internal<R: Read>(
@@ -409,10 +430,10 @@ impl Tileset {
         })
     }
 
-    fn new_reference(
+    pub fn new_reference(
         attrs: &[OwnedAttribute],
         map_path: Option<&Path>,
-    ) -> Result<Tileset, TiledError> {
+    ) -> Result<TilesetRef, TiledError> {
         let ((), (first_gid, source)) = get_attrs!(
             attrs,
             optionals: [],
@@ -423,17 +444,22 @@ impl Tileset {
             TiledError::MalformedAttributes("tileset must have a firstgid, name tile width and height with correct types".to_string())
         );
 
-        let tileset_path = map_path.ok_or_else(||TiledError::Other("Maps with external tilesets must know their file location.  See parse_with_path(Path).".to_string()))?.with_file_name(source);
-        let file = File::open(&tileset_path).map_err(|_| {
-            TiledError::Other(format!(
-                "External tileset file not found: {:?}",
-                tileset_path
-            ))
-        })?;
-        Tileset::new_external(file, first_gid)
+        match map_path {
+            Some(path) => {
+                let tileset_path = path.with_file_name(source);
+                let file = File::open(&tileset_path).map_err(|_| {
+                    TiledError::Other(format!(
+                        "External tileset file not found: {:?}",
+                        tileset_path
+                    ))
+                })?;
+                Ok(TilesetRef::TileSet(Tileset::new_external(file, first_gid)?))
+            }
+            None => Ok(TilesetRef::Path(source, first_gid)),
+        }
     }
 
-    fn new_external<R: Read>(file: R, first_gid: u32) -> Result<Tileset, TiledError> {
+    pub fn new_external<R: Read>(file: R, first_gid: u32) -> Result<Tileset, TiledError> {
         let mut tileset_parser = EventReader::new(file);
         loop {
             match tileset_parser
@@ -943,8 +969,8 @@ impl Object {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Frame {
-    tile_id: u32,
-    duration: u32,
+    pub tile_id: u32,
+    pub duration: u32,
 }
 
 impl Frame {
